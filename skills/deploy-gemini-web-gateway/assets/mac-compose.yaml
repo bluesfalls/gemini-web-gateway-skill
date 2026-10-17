@@ -1,0 +1,20 @@
+# Review-only template. Prepare private config/config.yaml and a verified image first.
+# No Cookie or API key belongs in this file or environment.
+services:
+  gateway:
+    image: "${GEMINI_IMAGE:?Set a reviewed image digest}"
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
+    volumes:
+      - "./config:/app/config:ro"
+      - "./data:/app/data"
+      - "./cache:/app/cache"
+    environment:
+      CONFIG_SERVER__HOST: "0.0.0.0"
+      CONFIG_SERVER__PORT: "8000"
+      GEMINI_COOKIE_PATH: "/app/cache"
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    restart: "on-failure:3"
