@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+*.log
+*.sqlite*
+*.har
+config.yaml
+config.json
+models.json
+workbuddy-additions.json
+catalog.json
+cache/
+data/
+backups/
+private/

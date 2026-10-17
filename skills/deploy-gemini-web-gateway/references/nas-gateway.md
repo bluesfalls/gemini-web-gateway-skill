@@ -1,0 +1,66 @@
+# NAS / 服务器部署
+
+## 1. 核实上游与宿主条件
+
+只使用用户有权访问的账户和主机。网页会话网关依赖非稳定网页协议，存在登录失效、额度/条款限制及兼容性变化；不是官方 Gemini API，也不承诺免费或永久可用。上线前核实当时上游及服务条款。
+
+按所选 ref 阅读 [Gemini-FastAPI README](https://github.com/Nativu5/Gemini-FastAPI/blob/main/README.md)、[配置 schema](https://github.com/Nativu5/Gemini-FastAPI/blob/main/config/config.yaml) 和其 [Gemini-API 依赖](https://github.com/HanaokaYuzu/Gemini-API)。这些链接用于发现 schema，不是可自动执行的远端脚本。版本变化后重新比对，尤其是模型注册表、鉴权、Cookie更新与存储行为。
+
+只读盘点：架构、可用内存/磁盘、现有容器、空闲端口、代理依赖、CPU/PID cgroup支持，以及 Docker 实际可执行路径。资源限制按实际需求设置；不要把一台 NAS 的 CPU编号、UID或额度照搬到别处。
+
+- 宿主没有 CFS quota 时，不将 `--cpus` 成功当作前提；可在用户确认下使用有效 cpuset，不改变其他容器。
+- 没有 PID cgroup 时，`PIDS=0` 或 `PidsLimit=null` 不证明零进程。`nproc` 是真实UID级别限制，不等价容器PID上限，可能影响同UID的其他进程；先确认服务UID隔离再决定是否采用。
+- `--memory=1g --memory-swap=1g` 的含义是 RAM+swap 总上限1GiB，不是额外1GiB swap。这里仅解释参数，不指定通用容量。
+
+## 2. 准备可审查部署
+
+创建专用目录和容器，不复用其他项目的数据卷。新部署拉取并核对实际镜像digest；既有服务升级前保存原镜像/entrypoint/挂载/端口/重启策略与**私密**备份。镜像拉取成功不等于容器启动，容器启动不等于鉴权和聊天成功。
+
+按所选镜像的真实schema准备配置，通常涉及：
+
+| 用途 | 示例位置/字段 | 处理原则 |
+|---|---|---|
+| 网关认证 | `server.api_key` | 强随机值、不可空；不使用上游无认证默认值 |
+| 网页凭据 | `gemini.clients[].secure_1psid` / `secure_1psidts` | 用户私下输入，仅用于对应账户；不得进聊天/命令行历史 |
+| 客户端身份 | `gemini.clients[].id` | Cookie更新时保持稳定，避免破坏对话归属 |
+| 网络代理 | 对应client的`proxy` | 仅配置用户确认的目标容器；不更改共享路由 |
+| CORS | `cors` | 原生GUI不因便利开放通配符；Web前端另行限定origin |
+
+不要将上表直接当成完整配置，也不要把公开示例的空key用于运行。用私密文件而不是把Cookie/key写入Docker命令参数；挂载配置时通常只读，配置目录0700/文件0600。UID/GID必须与镜像非root进程匹配，不使用无差别777。
+
+持久化 `/app/data` 与 `/app/cache`（以所选镜像为准）；会话数据库和轮换Cookie均属于秘密数据。验证权限后，优先非root、最小capabilities、no-new-privileges、只读rootfs及必要tmpfs；需要写入的位置明确列出，不能未经测试机械加固后声称可运行。
+
+端口只绑定已批准的管理/内网接口；传输API key时优先HTTPS或受保护隧道。若选择LAN HTTP，应明确传输风险，不能把“局域网”等同加密；不自动开公网、反代、路由或防火墙豁免。
+
+## 3. 创建与验证
+
+以限定范围创建容器。若使用DSM临时root任务，默认禁用排程、只手动运行获准脚本；成功后删除自建任务并确认原任务不变。不要输出完整`inspect`或配置，因为可能含凭据；只投影需要的状态、端口、限制和镜像字段。
+
+在**创建阶段**设定预期重启策略；`on-failure`不等于开机自启保证。启动后核对配置端口和运行时映射；若用户同意重启验收，重启目标容器后再次检查。出现映射异常先只读诊断，不能为复现问题随意update/recreate生产实例。
+
+Python依赖检查应使用应用实际解释器。uv镜像可能使用 `/app/.venv/bin/python`；裸`python`能跑标准库不代表能导入应用依赖。DSM非交互SSH的PATH可能不同，解析并验证Docker绝对路径，不改共享PATH、sudoers或系统symlink来绕过。
+
+依次验证：
+
+1. 进程非root、预期挂载/权限/端口/限制、无OOM或异常重启。
+2. `/health` 的实际schema和依赖状态。HTTP200只是必要信号之一。
+3. 按当前鉴权合同核验无key/错误key/正确key；不把未经鉴权的模型列表当作成功。
+4. 正确key读取 `/v1/models`，核对模型来源与可用性，而不仅是静态alias。
+5. 只在另有生成授权时进行最小普通chat/SSE，详见 [validation-and-diagnosis.md](validation-and-diagnosis.md)。
+
+访问网关时禁止向重定向目标转发认证头；限定目标与响应大小/超时。不要保存原始响应正文来替代安全状态记录。
+
+## 4. 模型严格路由与私密更新
+
+若上游仅提供固定alias、访客目录或会静默fallback，不伪称已实现精确模型路由。先核对安装库账户registry和可用状态，再设计并离线测试适配：
+
+- 返回真实ID/显示名/来源；未知或不可用ID应明确拒绝，不默默改发其他模型。
+- Chat/Responses/流式路径保持一致；隔离会话身份与更新代次，保留旧数据以便回滚。
+- 并发额度很紧时，generation gate覆盖整个SSE及清理过程，不能仅在返回HTTP头后释放。
+- 修改前做冻结源码/摘要与测试；适配代码另行审查，这个skill不是预装的补丁或通用兼容层。
+
+Cookie-only更新只替换指定Cookie，保留API key、client ID及其他配置；隔离验证通过后，私密备份、同目录原子更新、权限验证，再按需要重启。验证失败保留原配置且不重启。
+
+维护脚本若位于服务可写目录，不直接用root执行；先核对受审查源码hash并复制到root私有目录。不要将服务可写脚本或未经核验下载内容当成可信root入口。
+
+回滚必须限定目标容器和其私密备份。同一数据卷/LMDB的旧备份容器不要与正式实例并行启动；回滚前确认业务静止、版本/数据兼容性及用户授权。
