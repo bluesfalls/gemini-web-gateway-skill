@@ -1,4 +1,4 @@
 interface:
   display_name: "Gemini 网页网关部署"
   short_description: "安全部署 NAS 或 Mac 本地网关，接入 Cherry Studio 或 WorkBuddy"
-  default_prompt: "使用 $deploy-gemini-web-gateway 在自有 NAS 或 Mac 本机部署 Gemini 对话网关或迁移 GUI 配置，保留现有服务并私密处理凭据。"
+  default_prompt: "使用 $deploy-gemini-web-gateway 在自有 NAS 或 Mac 本机部署 Gemini 网关、接入 GUI，并按授权配置和验收桌面文件工具；保留现有服务，私密处理凭据，不自动发送生成请求。"
